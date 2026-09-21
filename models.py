@@ -8,5 +8,6 @@ class Editorial(BaseModel):
 class Libro(BaseModel):
     ISBN: str
     titulo: str
-    autor: str
-    precio: float  # Representación estándar para valores decimales en JSON
+    author: str
+    precio: float
+
