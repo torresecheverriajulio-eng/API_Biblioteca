@@ -19,9 +19,8 @@ libros_db = {
     5: Libro(ISBN="978-5", titulo="El Aleph", author="Jorge Luis Borges", precio=15.00)
 }
 
-# --- ENDPOINTS (MÉTODOS GET CORREGIDOS) ---
+# --- ENDPOINTS (MÉTODOS GET CORREGIDOS Y UNIFICADOS) ---
 
-# Cambiamos {isbn} por {book_id} y especificamos que es de tipo entero (: int)
 @app.get("/books/{book_id}", response_model=Libro)
 async def obtener_libro(book_id: int):
     """Busca un libro mediante su ID numérico (1-5)"""
@@ -29,7 +28,8 @@ async def obtener_libro(book_id: int):
         raise HTTPException(status_code=404, detail="Libro no encontrado")
     return libros_db[book_id]
 
-@app.get("/editoriales/{id_ed}", response_model=Editorial)
+# Actualizado a /editorial/{id_ed} en singular
+@app.get("/editorial/{id_ed}", response_model=Editorial)
 async def obtener_editorial(id_ed: int):
     """Busca una editorial mediante su ID numérico (1-3)"""
     if id_ed not in editoriales_db:
