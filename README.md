@@ -1,1 +1,2 @@
-# API_Biblioteca
+# apipybiblioteca
+# API REST con fines educativos
