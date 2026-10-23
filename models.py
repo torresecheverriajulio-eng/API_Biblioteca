@@ -16,4 +16,3 @@ class Libro(SQLModel, table=True):
     precio: float
     ided_editorial: Optional[int] = Field(default=None, foreign_key="editorial.ided")
 
-
