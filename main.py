@@ -1,36 +1,49 @@
 import os
-from typing import List
+from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException
-from sqlmodel import SQLModel, create_engine, Session, select
-from modelos import Libro, Editorial
+from sqlmodel import SQLModel, create_engine, Session, select, Field
 
-# 1. Configuración del Motor de Base de Datos
-# Render inyectará de forma segura la URL de PostgreSQL mediante esta variable de entorno
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://usuario:password@localhost:5432/mi_bd")
+# ---- 1. MODELOS DE BASE DE DATOS (UNIFICADOS) ----
+class Editorial(SQLModel, table=True):
+    __tablename__ = "editorial"
+    ided: Optional[int] = Field(default=None, primary_key=True)
+    nombre: str = Field(index=True)
+    pais: str
 
-# Asegurar compatibilidad con el driver de SQLAlchemy y Asyncpg si aplica
+class Libro(SQLModel, table=True):
+    __tablename__ = "libro"
+    ISBN: str = Field(primary_key=True)
+    titulo: str = Field(index=True)
+    autor: str
+    precio: float
+    ided_editorial: Optional[int] = Field(default=None, foreign_key="editorial.ided")
+
+
+# ---- 2. CONFIGURACIÓN DEL MOTOR DE BASE DE DATOS ----
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 engine = create_engine(DATABASE_URL, echo=True)
 
-app = FastAPI(title="API de Biblioteca Universitaria - Práctica")
+app = FastAPI(title="API Biblioteca Universitaria")
 
-# 2. Ciclo de Vida: Creación automática de tablas en PostgreSQL al arrancar
+
+# ---- 3. EVENTOS Y DEPENDENCIAS ----
 @app.on_event("startup")
 def on_startup():
     SQLModel.metadata.create_all(engine)
 
-# Dependencia para asegurar la apertura y cierre correcto de conexiones por cada Request
 def get_session():
     with Session(engine) as session:
         yield session
 
-# 3. ENDPOINTS: Operaciones CRUD solicitadas
 
-# --- SECCIÓN EDITORIALES ---
+# ---- 4. RUTAS CRUD (ENDPOINTS) ----
 
-@app.post("/editorial/", response_model=Editorial, status_code=21)
+# --- EDITORIALES ---
+@app.post("/editorial/", response_model=Editorial, status_code=201)
 def crear_editorial(editorial: Editorial, session: Session = Depends(get_session)):
     session.add(editorial)
     session.commit()
@@ -45,16 +58,13 @@ def obtener_editorial(id_ed: int, session: Session = Depends(get_session)):
     return editorial
 
 
-# --- SECCIÓN LIBROS ---
-
-@app.post("/books/", response_model=Libro, status_code=21)
+# --- LIBROS ---
+@app.post("/books/", response_model=Libro, status_code=201)
 def crear_libro(libro: Libro, session: Session = Depends(get_session)):
-    # Validar si la editorial existe antes de ligar el libro (Integridad Referencial)
     if libro.ided_editorial:
         editorial = session.get(Editorial, libro.ided_editorial)
         if not editorial:
-            raise HTTPException(status_code=400, detail="La Editorial asignada no existe.")
-            
+            raise HTTPException(status_code=400, detail="La Editorial asignada no existe")
     session.add(libro)
     session.commit()
     session.refresh(libro)
@@ -79,4 +89,5 @@ def eliminar_libro(book_id: str, session: Session = Depends(get_session)):
     session.delete(libro)
     session.commit()
     return {"status": "Registro eliminado exitosamente"}
+
 
