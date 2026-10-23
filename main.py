@@ -1,37 +1,82 @@
-from fastapi import FastAPI, HTTPException
-from models import Libro, Editorial
+import os
+from typing import List
+from fastapi import FastAPI, Depends, HTTPException
+from sqlmodel import SQLModel, create_engine, Session, select
+from modelos import Libro, Editorial
+
+# 1. Configuración del Motor de Base de Datos
+# Render inyectará de forma segura la URL de PostgreSQL mediante esta variable de entorno
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://usuario:password@localhost:5432/mi_bd")
+
+# Asegurar compatibilidad con el driver de SQLAlchemy y Asyncpg si aplica
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
+engine = create_engine(DATABASE_URL, echo=True)
 
 app = FastAPI(title="API de Biblioteca Universitaria - Práctica")
 
-# Base de datos simulada: Llaves numéricas para las 3 editoriales
-editoriales_db = {
-    1: Editorial(idEd=1, nombre="Alfaguara", pais="España"),
-    2: Editorial(idEd=2, nombre="Planeta", pais="México"),
-    3: Editorial(idEd=3, nombre="Anagrama", pais="España")
-}
+# 2. Ciclo de Vida: Creación automática de tablas en PostgreSQL al arrancar
+@app.on_event("startup")
+def on_startup():
+    SQLModel.metadata.create_all(engine)
 
-# Base de datos simulada: Llaves numéricas (1 al 5) para los 5 libros
-libros_db = {
-    1: Libro(ISBN="978-1", titulo="Cien años de soledad", author="Gabriel García Márquez", precio=25.50),
-    2: Libro(ISBN="978-2", titulo="Pedro Páramo", author="Juan Rulfo", precio=18.00),
-    3: Libro(ISBN="978-3", titulo="Rayuela", author="Julio Cortázar", precio=22.50),
-    4: Libro(ISBN="978-4", titulo="Ficciones", author="Jorge Luis Borges", precio=19.99),
-    5: Libro(ISBN="978-5", titulo="El Aleph", author="Jorge Luis Borges", precio=15.00)
-}
+# Dependencia para asegurar la apertura y cierre correcto de conexiones por cada Request
+def get_session():
+    with Session(engine) as session:
+        yield session
 
-# --- ENDPOINTS (MÉTODOS GET CORREGIDOS Y UNIFICADOS) ---
+# 3. ENDPOINTS: Operaciones CRUD solicitadas
+
+# --- SECCIÓN EDITORIALES ---
+
+@app.post("/editorial/", response_model=Editorial, status_code=21)
+def crear_editorial(editorial: Editorial, session: Session = Depends(get_session)):
+    session.add(editorial)
+    session.commit()
+    session.refresh(editorial)
+    return editorial
+
+@app.get("/editorial/{id_ed}", response_model=Editorial)
+def obtener_editorial(id_ed: int, session: Session = Depends(get_session)):
+    editorial = session.get(Editorial, id_ed)
+    if not editorial:
+        raise HTTPException(status_code=404, detail="Editorial no encontrada")
+    return editorial
+
+
+# --- SECCIÓN LIBROS ---
+
+@app.post("/books/", response_model=Libro, status_code=21)
+def crear_libro(libro: Libro, session: Session = Depends(get_session)):
+    # Validar si la editorial existe antes de ligar el libro (Integridad Referencial)
+    if libro.ided_editorial:
+        editorial = session.get(Editorial, libro.ided_editorial)
+        if not editorial:
+            raise HTTPException(status_code=400, detail="La Editorial asignada no existe.")
+            
+    session.add(libro)
+    session.commit()
+    session.refresh(libro)
+    return libro
+
+@app.get("/books/", response_model=List[Libro])
+def obtener_todos_los_libros(session: Session = Depends(get_session)):
+    return session.exec(select(Libro)).all()
 
 @app.get("/books/{book_id}", response_model=Libro)
-async def obtener_libro(book_id: int):
-    """Busca un libro mediante su ID numérico (1-5)"""
-    if book_id not in libros_db:
+def obtener_libro(book_id: str, session: Session = Depends(get_session)):
+    libro = session.get(Libro, book_id)
+    if not libro:
         raise HTTPException(status_code=404, detail="Libro no encontrado")
-    return libros_db[book_id]
+    return libro
 
-# Actualizado a /editorial/{id_ed} en singular
-@app.get("/editorial/{id_ed}", response_model=Editorial)
-async def obtener_editorial(id_ed: int):
-    """Busca una editorial mediante su ID numérico (1-3)"""
-    if id_ed not in editoriales_db:
-        raise HTTPException(status_code=404, detail="Editorial no encontrada")
-    return editoriales_db[id_ed]
+@app.delete("/books/{book_id}")
+def eliminar_libro(book_id: str, session: Session = Depends(get_session)):
+    libro = session.get(Libro, book_id)
+    if not libro:
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    session.delete(libro)
+    session.commit()
+    return {"status": "Registro eliminado exitosamente"}
+
