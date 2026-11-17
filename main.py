@@ -1,7 +1,8 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException, Header
 from sqlmodel import Session, create_engine, select
-from modelos import Usuario, Libro, Editorial
+from models import Usuario, Libro, Editorial
+
 
 app = FastAPI(title="API Biblioteca - Proyecto Final", version="1.0")
 
