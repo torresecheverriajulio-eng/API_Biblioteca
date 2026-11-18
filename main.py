@@ -7,9 +7,12 @@ from models import Usuario, Libro, Editorial
 
 app = FastAPI(title="API Biblioteca - Proyecto Final", version="1.0")
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Ajuste de URL para usar psycopg (versión 3) con Supabase
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 engine = create_engine(DATABASE_URL)
 
@@ -35,7 +38,7 @@ def verificar_token(authorization: str = Header(None)):
 def inicio():
     return {"mensaje": "API Biblioteca en línea"}
 
-# 1. Login: Acepta credenciales por JSON (Body) O por Query Params
+# 1. Login: Valida credenciales contra Supabase y entrega token
 @app.post("/login")
 def login(
     datos: Optional[LoginRequest] = Body(default=None),
@@ -49,11 +52,14 @@ def login(
     if not user_val or not pass_val:
         raise HTTPException(status_code=400, detail="Debes enviar username y password")
 
-    consulta = select(Usuario).where(
-        Usuario.username == user_val,
-        Usuario.password == pass_val
-    )
-    usuario = session.exec(consulta).first()
+    try:
+        consulta = select(Usuario).where(
+            Usuario.username == user_val,
+            Usuario.password == pass_val
+        )
+        usuario = session.exec(consulta).first()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error de conexión o tabla en BD: {str(e)}")
     
     if not usuario:
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
@@ -67,17 +73,28 @@ def login(
 # 2. Listar Libros (Protegido)
 @app.get("/libros", dependencies=[Depends(verificar_token)])
 def obtener_libros(session: Session = Depends(get_session)):
-    return session.exec(select(Libro)).all()
+    try:
+        return session.exec(select(Libro)).all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al consultar libros: {str(e)}")
 
 # 3. Listar Editoriales (Protegido)
 @app.get("/editorial", dependencies=[Depends(verificar_token)])
 def obtener_editoriales(session: Session = Depends(get_session)):
-    return session.exec(select(Editorial)).all()
+    try:
+        return session.exec(select(Editorial)).all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al consultar editoriales: {str(e)}")
 
 # 4. Buscar Libros por Año (Protegido)
 @app.get("/buscar/year/{year}", dependencies=[Depends(verificar_token)])
 def buscar_libros_por_year(year: int, session: Session = Depends(get_session)):
-    resultados = session.exec(select(Libro).where(Libro.year == year)).all()
+    try:
+        resultados = session.exec(select(Libro).where(Libro.year == year)).all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al buscar por año: {str(e)}")
+        
     if not resultados:
         raise HTTPException(status_code=404, detail=f"No hay libros registrados en el año {year}")
     return resultados
+
