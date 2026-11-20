@@ -5,9 +5,8 @@ from pydantic import BaseModel
 from sqlmodel import Session, create_engine, select
 from models import Usuario, Libro, Editorial
 
-app = FastAPI(title="API Biblioteca - Proyecto Final", version="1.0")
+app = FastAPI(title="API Librería Chiapas - Proyecto Final", version="1.0")
 
-# Ajuste de URL para usar psycopg (versión 3) con Supabase
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
@@ -38,7 +37,7 @@ def verificar_token(authorization: str = Header(None)):
 def inicio():
     return {"mensaje": "API Biblioteca en línea"}
 
-# 1. Login: Valida credenciales contra Supabase y entrega token
+# ==================== AUTENTICACIÓN ====================
 @app.post("/login")
 def login(
     datos: Optional[LoginRequest] = Body(default=None),
@@ -52,49 +51,122 @@ def login(
     if not user_val or not pass_val:
         raise HTTPException(status_code=400, detail="Debes enviar username y password")
 
-    try:
-        consulta = select(Usuario).where(
-            Usuario.username == user_val,
-            Usuario.password == pass_val
-        )
-        usuario = session.exec(consulta).first()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error de conexión o tabla en BD: {str(e)}")
-    
+    consulta = select(Usuario).where(Usuario.username == user_val, Usuario.password == pass_val)
+    usuario = session.exec(consulta).first()
+
     if not usuario:
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
-        
+
     return {
         "mensaje": f"Bienvenido {usuario.username}",
         "access_token": TOKEN_SECRETO,
         "token_type": "Bearer"
     }
 
-# 2. Listar Libros (Protegido)
+# ==================== CONSULTAS PERSONALIZADAS DE LIBROS ====================
+# (Deben ir ANTES de /libros/{isbn} para evitar conflictos de rutas)
+
+@app.get("/libros/sinexistencia", dependencies=[Depends(verificar_token)])
+def libros_sin_existencia(session: Session = Depends(get_session)):
+    return session.exec(select(Libro).where(Libro.existencia == 0)).all()
+
+@app.get("/libros/editorial/{editorial_id}", dependencies=[Depends(verificar_token)])
+def libros_por_editorial(editorial_id: int, session: Session = Depends(get_session)):
+    return session.exec(select(Libro).where(Libro.ided_editorial == editorial_id)).all()
+
+@app.get("/libros/anio/{anio}", dependencies=[Depends(verificar_token)])
+def libros_por_anio(anio: int, session: Session = Depends(get_session)):
+    resultados = session.exec(select(Libro).where(Libro.year == anio)).all()
+    if not resultados:
+        raise HTTPException(status_code=404, detail=f"No hay libros registrados en el año {anio}")
+    return resultados
+
+# ==================== CRUD COMPLETO: LIBROS ====================
+
+@app.post("/libros", status_code=201, dependencies=[Depends(verificar_token)])
+def crear_libro(libro: Libro, session: Session = Depends(get_session)):
+    if session.get(Libro, libro.ISBN):
+        raise HTTPException(status_code=400, detail="Ya existe un libro con ese ISBN")
+    session.add(libro)
+    session.commit()
+    session.refresh(libro)
+    return libro
+
 @app.get("/libros", dependencies=[Depends(verificar_token)])
 def obtener_libros(session: Session = Depends(get_session)):
-    try:
-        return session.exec(select(Libro)).all()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al consultar libros: {str(e)}")
+    return session.exec(select(Libro)).all()
 
-# 3. Listar Editoriales (Protegido)
-@app.get("/editorial", dependencies=[Depends(verificar_token)])
+@app.get("/libros/{isbn}", dependencies=[Depends(verificar_token)])
+def obtener_libro(isbn: str, session: Session = Depends(get_session)):
+    libro = session.get(Libro, isbn)
+    if not libro:
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    return libro
+
+@app.put("/libros/{isbn}", dependencies=[Depends(verificar_token)])
+def actualizar_libro(isbn: str, datos: Libro, session: Session = Depends(get_session)):
+    libro = session.get(Libro, isbn)
+    if not libro:
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    libro.titulo = datos.titulo
+    libro.autor = datos.autor
+    libro.precio = datos.precio
+    libro.existencia = datos.existencia
+    libro.ided_editorial = datos.ided_editorial
+    libro.year = datos.year
+    session.add(libro)
+    session.commit()
+    session.refresh(libro)
+    return libro
+
+@app.delete("/libros/{isbn}", dependencies=[Depends(verificar_token)])
+def eliminar_libro(isbn: str, session: Session = Depends(get_session)):
+    libro = session.get(Libro, isbn)
+    if not libro:
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    session.delete(libro)
+    session.commit()
+    return {"mensaje": f"Libro {isbn} eliminado correctamente"}
+
+# ==================== CRUD COMPLETO: EDITORIALES ====================
+
+@app.post("/editoriales", status_code=201, dependencies=[Depends(verificar_token)])
+def crear_editorial(editorial: Editorial, session: Session = Depends(get_session)):
+    session.add(editorial)
+    session.commit()
+    session.refresh(editorial)
+    return editorial
+
+@app.get("/editoriales", dependencies=[Depends(verificar_token)])
 def obtener_editoriales(session: Session = Depends(get_session)):
-    try:
-        return session.exec(select(Editorial)).all()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al consultar editoriales: {str(e)}")
+    return session.exec(select(Editorial)).all()
 
-# 4. Buscar Libros por Año (Protegido)
-@app.get("/buscar/year/{year}", dependencies=[Depends(verificar_token)])
-def buscar_libros_por_year(year: int, session: Session = Depends(get_session)):
-    try:
-        resultados = session.exec(select(Libro).where(Libro.year == year)).all()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al buscar por año: {str(e)}")
-        
-    if not resultados:
-        raise HTTPException(status_code=404, detail=f"No hay libros registrados en el año {year}")
-    return resultados
+@app.get("/editoriales/{ided}", dependencies=[Depends(verificar_token)])
+def obtener_editorial(ided: int, session: Session = Depends(get_session)):
+    editorial = session.get(Editorial, ided)
+    if not editorial:
+        raise HTTPException(status_code=404, detail="Editorial no encontrada")
+    return editorial
+
+@app.put("/editoriales/{ided}", dependencies=[Depends(verificar_token)])
+def actualizar_editorial(ided: int, datos: Editorial, session: Session = Depends(get_session)):
+    editorial = session.get(Editorial, ided)
+    if not editorial:
+        raise HTTPException(status_code=404, detail="Editorial no encontrada")
+    editorial.nombre = datos.nombre
+    editorial.pais = datos.pais
+    session.add(editorial)
+    session.commit()
+    session.refresh(editorial)
+    return editorial
+
+@app.delete("/editoriales/{ided}", dependencies=[Depends(verificar_token)])
+def eliminar_editorial(ided: int, session: Session = Depends(get_session)):
+    editorial = session.get(Editorial, ided)
+    if not editorial:
+        raise HTTPException(status_code=404, detail="Editorial no encontrada")
+    session.delete(editorial)
+    session.commit()
+    return {"mensaje": f"Editorial {ided} eliminada correctamente"}
+
 
