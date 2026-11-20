@@ -20,6 +20,7 @@ class Libro(SQLModel, table=True):
     titulo: str
     autor: str
     precio: Optional[Decimal] = None
+    existencia: int = Field(default=0)
     ided_editorial: Optional[int] = Field(default=None, foreign_key="editorial.ided")
     year: int
 
